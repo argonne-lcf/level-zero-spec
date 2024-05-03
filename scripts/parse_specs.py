@@ -421,6 +421,7 @@ def _filter_version(d, max_ver):
 
     def __filter_desc(d):
         if 'desc' in d and isinstance(d['desc'], dict):
+            desc = ""
             for k, v in d['desc'].items():
                 if float(k) <= max_ver:
                     desc = v
