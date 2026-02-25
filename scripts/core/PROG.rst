@@ -1,11 +1,8 @@
-﻿
-<%
+﻿<%
     OneApi=tags['$OneApi']
     x=tags['$x']
     X=x.upper()
-%>
-
-<%!
+%><%!
     from parse_specs import _version_compare_less, _version_compare_gequal
 %>
 
@@ -75,7 +72,7 @@ The following pseudo-code demonstrates a basic initialization and device discove
        // Discover all the driver instances
        ze_init_driver_type_desc_t desc = {ZE_STRUCTURE_TYPE_INIT_DRIVER_TYPE_DESC};
        desc.pNext = nullptr;
-       desc.driverType = UINT32_MAX; // all driver types requested
+       desc.flags = UINT32_MAX; // all driver types requested
        uint32_t driverCount = 0;
        ze_result_t result = zeInitDrivers(&driverCount, nullptr, &desc); // Query the number of drivers
        if (result != ZE_RESULT_SUCCESS) {
@@ -91,19 +88,19 @@ The following pseudo-code demonstrates a basic initialization and device discove
        // Find a driver Handle that supports a GPU device type
        ze_driver_handle_t hDriver = nullptr;
        ze_device_handle_t hDevice = nullptr;
-       for(i = 0; i < driverCount; ++i) {
+       for(uint32_t i = 0; i < driverCount; ++i) {
            uint32_t deviceCount = 0;
            zeDeviceGet(allDrivers[i], &deviceCount, nullptr);
 
            ze_device_handle_t* allDevices = allocate(deviceCount * sizeof(ze_device_handle_t));
            zeDeviceGet(allDrivers[i], &deviceCount, allDevices);
 
-           for(d = 0; d < deviceCount; ++d) {
-               ze_device_properties_t device_properties {};
-               device_properties.stype = ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES;
-               zeDeviceGetProperties(allDevices[d], &device_properties);
+           for(uint32_t d = 0; d < deviceCount; ++d) {
+               ze_device_properties_t deviceProperties {};
+               deviceProperties.stype = ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES;
+               zeDeviceGetProperties(allDevices[d], &deviceProperties);
 
-               if(ZE_DEVICE_TYPE_GPU == device_properties.type) {
+               if(ZE_DEVICE_TYPE_GPU == deviceProperties.type) {
                    hDriver = allDrivers[i];
                    hDevice = allDevices[d];
                    break;
@@ -434,8 +431,84 @@ The following pseudo-code demonstrates a basic sequence for creating a physical 
 
         ${x}PhysicalMemCreate(hContext, hDevice, &pmemDesc, &hPhysicalAlloc);
 
-Mapping Virtual Memory Pages
+Reading Physical Memory Properties
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An application can query properties of a physical memory object using ${x}PhysicalMemGetProperties.
+
+The following pseudo-code demonstrates querying properties of a physical memory object:
+
+.. parsed-literal::
+
+    // Set up the request for an exportable allocation
+
+    ze_external_memory_export_desc_t export_desc = {
+        ZE_STRUCTURE_TYPE_EXTERNAL_MEMORY_EXPORT_DESC,
+        nullptr, // pNext
+        ZE_EXTERNAL_MEMORY_TYPE_FLAG_OPAQUE_FD
+    };
+
+    ze_physical_mem_desc_t alloc_desc = {
+    .stype = ZE_STRUCTURE_TYPE_PHYSICAL_MEM_DESC,
+    .pNext = &export_desc,
+    .flags = 0,
+    .size = 1024
+    };
+
+    ze_physical_mem_handle_t hPhysicalMemory;
+
+    ${x}PhysicalMemCreate(hContext, hDevice, &alloc_desc, &hPhysicalMemory)
+
+    // Set up the request to export the external memory handle
+
+    ze_external_memory_export_fd_t export_fd = {
+        ZE_STRUCTURE_TYPE_EXTERNAL_MEMORY_EXPORT_FD,
+        nullptr, // pNext
+        ZE_EXTERNAL_MEMORY_TYPE_FLAG_OPAQUE_FD,
+        0 // [out] fd
+    };
+
+    // Link the export request into the query
+
+    ze_physical_mem_properties_t physicalMemProperties = {
+        ZE_STRUCTURE_TYPE_PHYSICAL_MEM_PROPERTIES
+    };
+
+    physicalMemProperties.pNext = &export_fd;
+
+    ${x}PhysicalMemGetProperties(hContext, hPhysicalMemory, &physicalMemProperties)
+
+    // User sends exportFd.fd to a peer process
+    int imported_fd = /\* fd received from peer process \*/;
+    // For importing reuse existing structs
+
+    ze_external_memory_import_fd_t import_fd = {
+
+    .stype = ZE_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMPORT_FD,
+
+    .pNext = nullptr,
+
+    .flags = ZE_EXTERNAL_MEMORY_TYPE_FLAG_OPAQUE_FD,
+
+    .fd = imported_fd
+
+    };
+
+    ze_physical_mem_desc_t alloc_desc = {
+
+    .stype = ZE_STRUCTURE_TYPE_PHYSICAL_MEM_DESC,
+
+    .pNext = &import_fd,
+
+    .flags = 0,
+    .size = 1024
+    };
+
+    ${x}PhysicalMemCreate(hContext, hDevice, &alloc_desc, &physicalMemImporter);
+
+
+Mapping Virtual Memory Pages
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Reserved virtual memory pages can be mapped to physical memory using ${x}VirtualMemMap.
 An application can map the entire reserved virtual address range or can sparsely map the
@@ -684,8 +757,7 @@ The following pseudo-code demonstrates how to import a Linux dma_buf as an exter
         alloc_desc.pNext = &import_fd;
         ${x}MemAllocDevice(hContext, &alloc_desc, size, alignment, hDevice, &ptr);
 
-Another example, which the following pseudo-code demonstrates, is how to import a Linux dma_buf as an external
-memory handle for :ref:`Images`:
+The following pseudo-code demonstrates how to import a Linux dma_buf as an external memory handle for :ref:`Images`:
 
 .. parsed-literal::
 
@@ -706,6 +778,26 @@ memory handle for :ref:`Images`:
 
         ${x}ImageCreate(hContext, hDevice, &image_desc, &hImage);
 
+The following pseudo-code demonstrates how to import a Linux dma_buf as an external memory handle for Physical Memory:
+
+.. parsed-literal::
+
+        // Set up the request to import the external memory handle
+        ${x}_external_memory_import_fd_t import_fd = {
+            ${X}_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMPORT_FD,
+            nullptr, // pNext
+            ${X}_EXTERNAL_MEMORY_TYPE_FLAG_DMA_BUF,
+            fd
+        };
+
+        ze_physical_mem_desc_t allocDesc = {
+        .stype = ZE_STRUCTURE_TYPE_PHYSICAL_MEM_DESC,
+        .pNext = &import_fd,
+        .flags = 0,
+        .size = 1024
+        };
+
+        ${x}PhysicalMemCreate(hContext, hDevice, &allocDesc, &physicalMemImporter);
 
 Command Queues and Command Lists
 ================================
@@ -954,6 +1046,78 @@ The following pseudo-code demonstrates a basic sequence for creation and usage o
        ${x}CommandListAppendLaunchKernel(hCommandList, hKernel, &launchArgs, nullptr, 0, nullptr);
        ...
 
+Appending kernels with additional parameters
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- New function is added to pass extra parameters when appending the kernel.
+- New parameters can be passed from extension and be vendor specific.
+- This function will allow to pass cooperative kernel using dedicated descriptor.
+- Multiple additional parameters can be passed as a linked list of descriptors.
+- If additional parameter or any combination is not supported, driver can return an error.
+
+The following pseudo-code demonstrates appending both regular and cooperative kernels
+
+.. parsed-literal::
+
+       // existing command list
+       ${x}_command_list_handle_t hCommandList;
+
+       // When appending regular kernel, just pass null pointer to extension argument
+       void \*pNext = nullptr;
+       ${x}CommandListAppendLaunchKernelWithParameters(hCommandList, hKernel, &launchArgs, pNext, nullptr, 0, nullptr);
+
+       // When appending cooperative kernel create cooperative descriptor
+       ${x}_command_list_append_launch_kernel_param_cooperative_desc_t cooperativeDesc = {
+           ${X}_STRUCTURE_TYPE_COMMAND_LIST_APPEND_PARAM_COOPERATIVE_DESC,
+           nullptr,
+           true
+       };
+       void \*pNext = &cooperativeDesc;
+       ${x}CommandListAppendLaunchKernelWithParameters(hCommandList, hKernel, &launchArgs, pNext, nullptr, 0, nullptr);
+       ...
+
+Appending kernels with arguments
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- New function is added to pass group size, arguments and additional extensions when appending the kernel.
+- Kernel object state is updated with new work group size and new arguments, as if separate ${x}KernelSetGroupSize and ${x}KernelSetArgumentValue functions were called.
+- Kernel arguments are passed as a pointer list where each argument represents a pointer to the argument value on specific index.
+- All kernel arguments must be provided.
+- If argument is SLM (size), then SLM size in bytes for this resource is provided under pointer on specific index and its type is size_t.
+- If argument is an immediate type (i.e. structure, non pointer type), then values under pointer must contain full size of immediate type.
+- Additional extensions can be passed from extension and be vendor specific.
+- Multiple additional extensions can be passed as a linked list of descriptors.
+- If additional extension or any combination is not supported, driver must return an error.
+
+The following pseudo-code demonstrates appending kernel with pointer, SLM and immediate type arguments
+
+.. parsed-literal::
+
+        // kernel signature
+        __kernel void foo(__global unsigned int \*dstBuff, __local unsigned int \*localArray, unsigned int addValue);
+
+        // existing command list
+        ${x}_command_list_handle_t hCommandList;
+
+        // existing kernel
+        ${x}_command_list_handle_t hKernel;
+
+        // output buffer
+        void \*dstBuff;
+
+        // SLM sizes for array
+        size_t localArraySizeInBytes;
+
+        // immediate arg
+        unsigned int addValue;
+
+        void \*args[] = { &dstBuff, &localArraySizeInBytes, &addValue};
+        ${x}_group_count_t groupCounts = {1,2,3};
+        ${x}_group_size_t groupSizes = {1,2,3};
+        ${x}CommandListAppendLaunchKernelWithArguments(hCommandList, hKernel, groupCounts, groupSizes, args, nullptr, nullptr, 0, nullptr);
+
+       ...
+
 Synchronization Primitives
 ==========================
 
@@ -1106,13 +1270,13 @@ A kernel timestamp event is a special type of event that records device timestam
 .. parsed-literal::
 
        // Get timestamp frequency
-%if _version_compare_gequal(ver, "1.1"):
-       const double timestampFreq = NS_IN_SEC / device_properties.timerResolution;
-%endif
-%if _version_compare_less(ver, "1.1"):
-       const uint64_t timestampFreq = device_properties.timerResolution;
-%endif
-       const uint64_t timestampMaxValue = ~(-1L << device_properties.kernelTimestampValidBits);
+     %if _version_compare_gequal(ver, "1.1"):
+       const double timestampFreq = NS_IN_SEC / deviceProperties.timerResolution;
+     %endif
+     %if _version_compare_less(ver, "1.1"):
+       const uint64_t timestampFreq = deviceProperties.timerResolution;
+     %endif
+       const uint64_t timestampMaxValue = ~(-1L << deviceProperties.kernelTimestampValidBits);
 
        // Create event pool
        ${x}_event_pool_desc_t tsEventPoolDesc = {
@@ -1164,8 +1328,165 @@ A kernel timestamp event is a special type of event that records device timestam
        double contextTimeInNs = ( tsResult->context.kernelEnd >= tsResult->context.kernelStart )
            ? ( tsResult->context.kernelEnd - tsResult->context.kernelStart ) * timestampFreq
            : (( timestampMaxValue - tsResult->context.kernelStart) + tsResult->context.kernelEnd + 1 ) * timestampFreq;
+
        ...
 
+
+Event synchronization mode
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+User can adjust Event synchronization modes by passing ${x}_event_sync_mode_desc_t struct as pNext during Event creation.
+
+Low power wait
+^^^^^^^^^^^^^^^
+
+When ${X}_EVENT_SYNC_MODE_FLAG_LOW_POWER_WAIT flag is enabled, driver will optimize Event host synchronization calls like ${x}EventHostSynchronize to use CPU threads more efficiently. For example, instead of active polling on memory location, it may use OS methods to sleep CPU thread.
+Changing this mode may impact completion latency.
+
+Interrups
+^^^^^^^^^^
+
+When ${X}_EVENT_SYNC_MODE_FLAG_SIGNAL_INTERRUPT flag is enabled, driver may program additional GPU commands related to signaling Event on the Device. Those commands will generate system interrupt.
+Interrupt may be used as additional signal to wake up CPU thread that is waiting for Event completion in low power mode.
+Driver may select which API calls are applicable for generating interrupts.
+
+Additionally, user may provide external interrupt id (${X}_EVENT_SYNC_MODE_FLAG_EXTERNAL_INTERRUPT_WAIT). OS methods will be used for Event host synchronization calls, to optimize waiting for completion. Similar to low power mode.
+It can be used only with Counter Based Events.
+
+.. _counter-based-events:
+
+Counter Based Events
+~~~~~~~~~~~~~~~~~~~~
+
+This type of event, referred to as a Counter Based (CB) Event, does not require an event pool, as the related allocations are managed internally by the driver. This reduces the overhead on the host for managing pool allocations.
+The CB Event can only be signaled on the GPU using an in-order command list.
+
+Every in-order command list has an internal submission counter that is updated with each append call. This counter manages internal in-order dependencies. The next append call waits for that counter implicitly.
+Note that some operations may be optimized, and the counter value may not directly correspond to the number of append calls.
+
+When a CB Event is passed as a signal event, it points to a specific counter value and memory location. Since the command list manages the counter allocation, this method avoids producing additional GPU memory operations (except timestamps). As a result, users do not need to explicitly control event completion before reusing it.
+
+Key features
+^^^^^^^^^^^^^^^^^^^^^
+- After creation, a CB Event is initially marked as completed. The completion state changes if the event is assigned as a `signalEvent` to an append call or if external storage is specified during creation.
+- CB Event can be waited for from any command list type.
+- ${x}EventHostReset is not allowed. Can be reused on any in-order command list without explicit reset. A new API call just replaces its previous state (counter/allocation)
+- ${x}EventHostSignal is not allowed. Can be signaled only from in-order command list
+- No need to wait for completion before reusing/destroying
+- CB Event doesn't own any memory allocations. Can be reused/destroyed with low cost. Timestamp allocation is also handled internally by the Driver
+- IPC sharing is one-directional. IPC CB Event opened in different process can be used only for waiting. If original Event state is changed (for example by next append call) and second process needs to see that update, IPC handle must be opened again.
+- Regular command list (known as recorded or non-immediate) is a special use case for CB Events. Will be described in separate section
+- When Event is reset (assigned as signal event to new append call), new timestamp data storage is provided implicitly. User can immediately query new data, without handling the completion
+- Event can be destroyed without waiting for completion, even if profiling is enabled
+
+Regular Event rely on memory state controlled by the user (explicit Reset calls). CB Event represents host programming sequence, without managing the state. For example:
+
+.. parsed-literal::
+       ${x}EventCounterBasedCreate(context, device, &desc, &event1); // counter not yet assigned
+
+       ${x}CommandListAppendLaunchKernel(cmdList1, kernel, &groupCount, &event1, 0, nullptr); // assigned counter=X on memory CL1_alloc
+       ${x}CommandListAppendLaunchKernel(cmdList2, kernel, &groupCount, nullptr, 1, &event1); // cmdList2 waits for counter=X on memory CL1_alloc
+
+       // reuse without waiting/reset
+       ${x}CommandListAppendLaunchKernel(cmdList3, kernel, &groupCount, &event1, 0, nullptr); // Replace state. Assigned counter=Y on memory CL3_alloc
+
+       // Event1 is implicitly reset to different state.
+       // cmdList2 can be still running on GPU. It waits for counter=X on memory CL1_alloc.
+       // Its also safe to delete Event object.
+
+       ${x}EventHostSynchronize(event1, UINT32_MAX); // wait for counter=Y on memory CL3_alloc
+
+IPC sharing
+^^^^^^^^^^^
+As mentioned previously, signaling CB Event replaces its state. This is why IPC sharing is one-directional. Opened event can be used only for waiting/querying (on host and GPU).
+
+Both Event object (original and shared) are independent. There is no need to wait for completion before reusing.
+Second process points to the original state until ${x}EventCounterBasedCloseIpcHandle is called.
+Original Event state may be changed without waiting for completion. Second process is not affected.
+
+Counter Based Event has dedicated API calls to handle IPC operations:${x}EventCounterBasedGetIpcHandle, ${x}EventCounterBasedOpenIpcHandle, ${x}EventCounterBasedCloseIpcHandle
+
+**Timestamps are not allowed for IPC sharing.**
+
+Obtaining counter memory and value
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+User may obtain counter memory location and value using ${x}EventCounterBasedGetDeviceAddress. For example, waiting for completion outside the L0 Driver. If Event state is replaced by new append call or ${x}CommandQueueExecuteCommandLists that signals such Event, below API must be called again to obtain new data.
+
+Multi directional dependencies on Regular command lists
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Regular command list with overlapping dependencies may be executed multiple times. For example, two command lists are executed in parallel with bi-directional dependencies.
+Its important to understand counter (Event) state transition, to correctly reflect users intention.
+
+
+.. parsed-literal::
+       regularCmdList1:       (A)      ------------->   (wait for B)   ----->   (C)
+                               |                            ^
+                               |                            |
+                               V                            |
+       regularCmdList2:   (wait for A)  ------------->     (B)         ----->   (D)
+
+In this example, all Events are synchronized to "ready" state after the first execution.
+It means that second execution of `regularCmdList1` waits again for "ready" `{1->2->3}` state of `regularCmdList2` (first execution) instead of `{4->5->6}`.
+This is because `regularCmdList2` was not yet executed for the second time. And their counters were not updated.
+
+First execution:
+
+.. parsed-literal::
+       // All Events are in "not ready" state
+       ${x}CommandQueueExecuteCommandLists(cmdQueue1, 1, &regularCmdList1, nullptr); // Counter updated to {1->2->3}
+       ${x}CommandQueueExecuteCommandLists(cmdQueue2, 1, &regularCmdList2, nullptr); // Counter updated to {1->2->3}
+
+       // All Events are "ready" now
+       ${x}CommandQueueSynchronize(cmdQueue1, timeout); // wait for counter=3
+       ${x}CommandQueueSynchronize(cmdQueue2, timeout); // wait for counter=3
+
+Second execution:
+
+.. parsed-literal::
+       // regularCmdList1 waits for "ready" {1->2->3} Events from first execution of regularCmdList2
+       // regularCmdList1 changes Events state to "not ready"
+       ${x}CommandQueueExecuteCommandLists(cmdQueue1, 1, &regularCmdList1, nullptr); // Counter updated to {4->5->6}
+
+       // regularCmdList2 waits for "not ready" {4->5->6} Events from second execution of regularCmdList1
+       ${x}CommandQueueExecuteCommandLists(cmdQueue2, 1, &regularCmdList2, nullptr); // Counter updated to {4->5->6}
+
+Different approach:
+
+To avoid above situation, user must remove all bi-directional dependencies. By using single command list (if possible) or split the workload into different command lists with single-directional dependencies.
+
+Using Counter Based Events for such scenarios is not always the most optimal usage mode. It may be better to use Regular Events with explicit Reset calls.
+
+External synchronization allocation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+User may optionally specify externally managed counter allocation and value. This can be done by passing ${x}_event_counter_based_external_sync_allocation_desc_t as extension of ${x}_event_counter_based_desc_t
+
+Requirements:
+
+- Counter allocation is managed by the user
+- User must ensure device allocation (`deviceAddress`) residency (${x}ContextMakeMemoryResident). It must be GPU accessible USM allocation
+- Host allocation (`hostAddress`) must be CPU accessible USM allocation (eg. waiting for completion)
+- User is responsible for updating both memory locations to >= `completionValue` to signal Event completion
+- Using such event for signaling on new API call, replaces the state (as described previously)
+
+
+External aggregate storage
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Aggregated storage event is a special use case for CB Events. It can be signaled from multiple append calls, but waiting requires only one memory compare operation.
+It can be created by passing ${x}_event_counter_based_external_aggregate_storage_desc_t as extension of ${x}_event_counter_based_desc_t.
+
+Requirements:
+
+- This extension cannot be used with "external storage" extension
+- User must ensure device allocation (`deviceAddress`) residency. It must be accessible by GPU
+- Driver will use `deviceAddress` for host synchronization as USM allocation
+- If Driver is not able to lock provided device allocation for CPU access, host waits are not possible
+- Apart from signaling operation, driver will not write anything else to the memory. Initial value is fully under users responsiblility
+- Signaling such event, will not replace its state (as described previously). It can be passed to multiple append calls and each append will increment the storage by `incrementValue` (atomically) on GPU
+- Using aggregated event as dependency, requires only one memory compare operation against final value: `completionValue` >=  `*deviceAddress`
+- Device storage is under users control. It must be reset by the user if needed
+- Profiling is not possible if producers originate on different GPUs (different timestamp domains)
+- User can programatically obtain increment value that would work even if underlying append API would be distributed to multiple engines via ${x}DeviceGetAggregatedCopyOffloadIncrementValue query.
 
 Barriers
 ========
@@ -1567,6 +1888,21 @@ Kernel arguments represent only the explicit kernel arguments that are within br
 - The ${x}CommandListAppendLaunchKernel et al. functions will make a copy of the kernel arguments to send to the device.
 - Kernel arguments can be updated at any time and used across multiple append calls.
 
+Note that when using images as arguments, implementation can check whether the image format is valid as an
+argument to a SPIRv module. If the image format is invalid, implementation may return ZE_RESULT_ERROR_UNSUPPORTED_IMAGE_FORMAT.
+
+If the image type allocated is valid, implementation cannot return unsupported during image creation.
+The images may be used in kernels that are not limited to the SPIRv image types,
+for example VC Runtime built Native binaries that support more image types than SPIRv and do not use the channel data type argument.
+
+Since `SPIRv channel type`_ and `OpenCL images`_ share the same channel data type restrictions,
+implementation can reuse the OpenCL type check to verify if the image can be set as argument for a kernel in SPIRv Module.
+
+.. _SPIRv channel type:
+   https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html#_image_channel_data_type
+
+.. _OpenCL images: https://registry.khronos.org/OpenCL/sdk/2.1/docs/man/xhtml/cl_image_format.html
+
 The following pseudo-code demonstrates a sequence for setting kernel arguments and launching the kernel:
 
 .. parsed-literal::
@@ -1634,6 +1970,12 @@ that has the ${X}_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COOPERATIVE_KERNELS flags se
 cooperative kernel launch may be determined by calling ${x}KernelSuggestMaxCooperativeGroupCount.
 
 .. parsed-literal::
+
+       // query and set kernel work-group size
+       uint32_t groupSizeX;
+       uint32_t groupSizeY;
+       ${x}KernelSuggestGroupSize(hKernel, imageWidth, imageHeight, 1, &groupSizeX, &groupSizeY, nullptr);
+       ${x}KernelSetGroupSize(hKernel, groupSizeX, groupSizeY, 1);
 
        // query the maximum cooperative kernel launch for the kernel
        uint32_t maxGroupCount;
@@ -1719,28 +2061,135 @@ The following table documents the supported knobs for overriding default functio
 +-----------------+-------------------------------------+------------+-----------------------------------------------------------------------------------+
 | Category        | Name                                | Values     | Description                                                                       |
 +=================+=====================================+============+===================================================================================+
-| Device          | ${X}_AFFINITY_MASK                    | list       | Forces driver to only report devices (and sub-devices) as specified by values     |
+| Device          | ${X}_AFFINITY_MASK                    | list       | Forces driver to only report devices (and sub-devices) as specified by values   |
 +                 +-------------------------------------+------------+-----------------------------------------------------------------------------------+
-|                 | ${X}_ENABLE_PCI_ID_DEVICE_ORDER       | {**0**, 1} | Forces driver to report devices from lowest to highest PCI bus ID                 |
+|                 | ${X}_ENABLE_PCI_ID_DEVICE_ORDER       | {**0**, 1} | Forces driver to report devices from lowest to highest PCI bus ID               |
 +-----------------+-------------------------------------+------------+-----------------------------------------------------------------------------------+
-| Memory          | ${X}_SHARED_FORCE_DEVICE_ALLOC        | {**0**, 1} | Forces all shared allocations into device memory                                  |
+| Memory          | ${X}_SHARED_FORCE_DEVICE_ALLOC        | {**0**, 1} | Forces all shared allocations into device memory                                |
 +-----------------+-------------------------------------+------------+-----------------------------------------------------------------------------------+
 
 %endif
 
 %if _version_compare_gequal(ver, "1.7"):
 
-+-----------------+-------------------------------------+-----------------------------------+-----------------------------------------------------------------------------------+
-| Category        | Name                                | Values                            | Description                                                                       |
-+=================+=====================================+===================================+===================================================================================+
-| Device          | ${X}_FLAT_DEVICE_HIERARCHY            | {**COMPOSITE**, FLAT, COMBINED}   | Defines device hierarchy model exposed by Level Zero driver implementation        |
-+                 +-------------------------------------+-----------------------------------+-----------------------------------------------------------------------------------+
-|                 | ${X}_AFFINITY_MASK                    | list                              | Forces driver to only report devices (and sub-devices) as specified by values     |
-+                 +-------------------------------------+-----------------------------------+-----------------------------------------------------------------------------------+
-|                 | ${X}_ENABLE_PCI_ID_DEVICE_ORDER       | {**0**, 1}                        | Forces driver to report devices from lowest to highest PCI bus ID                 |
-+-----------------+-------------------------------------+-----------------------------------+-----------------------------------------------------------------------------------+
-| Memory          | ${X}_SHARED_FORCE_DEVICE_ALLOC        | {**0**, 1}                        | Forces all shared allocations into device memory                                  |
-+-----------------+-------------------------------------+-----------------------------------+-----------------------------------------------------------------------------------+
+.. list-table:: Environment Variables
+   :widths: 15 35 20 30
+   :header-rows: 1
+
+   * - Category
+     - Name
+     - Values
+     - Description
+   * - Device
+     - ${X}_FLAT_DEVICE_HIERARCHY
+     - {**COMPOSITE**, FLAT, COMBINED}
+     - Defines device hierarchy model exposed by Level Zero driver implementation
+   * -
+     - ${X}_AFFINITY_MASK
+     - list
+     - Forces driver to only report devices (and sub-devices) as specified by values
+   * -
+     - ${X}_ENABLE_PCI_ID_DEVICE_ORDER
+     - {**0**, 1}
+     - Forces driver to report devices from lowest to highest PCI bus ID
+   * - Memory
+     - ${X}_SHARED_FORCE_DEVICE_ALLOC
+     - {**0**, 1}
+     - Forces all shared allocations into device memory
+   * - Drivers
+     - ${X}L_DRIVERS_ORDER
+     - string
+     - Defines ordering of drivers reported to user. See Driver Ordering section for syntax details.
+
+.. _driver-ordering:
+
+Driver Ordering
+~~~~~~~~~~~~~~~~
+
+The Level Zero Runtime provides the ability to change the default driver used in "zer" Level Zero Runtime APIs through an environment variable to enable flexible driver selection and ordering.
+
+This environment variable is read by the Level Zero Loader to determine the order in which drivers are initialized and used.
+
+A robust driver selector is created considering multiple drivers of different types with the following supported syntax:
+
+1. **Specify specific type and index within that type:**
+   ``ZEL_DRIVERS_ORDER=<driver_type>:<driver_index>[,<driver_type>:<driver_index>]``
+
+2. **Specify specific type:**
+   ``ZEL_DRIVERS_ORDER=<driver_type>[,<driver_type>]``
+
+3. **Specify only the driver index (Refers to the original global driver index):**
+   ``ZEL_DRIVERS_ORDER=<driver_index>[,<driver_index>]``
+
+**Supported Driver Types:**
+
+- ``DISCRETE_GPU_ONLY``
+- ``GPU``
+- ``INTEGRATED_GPU_ONLY``
+- ``NPU``
+
+This allows ordering all the drivers or reordering the drivers with those specified at the front. Due to reliance of other libraries that drivers are not "masked", one cannot mask drivers and devices through an environment variable read at the loader level.
+Devices or driver types not explicitly specified in the ``ZEL_DRIVERS_ORDER`` environment variable will still be exposed by the Level Zero Loader, but will appear at the end of the driver list in their default order.
+
+**Example Usage**
+
+1. ``ZEL_DRIVERS_ORDER = DISCRETE_GPU_ONLY:1, NPU``
+
+   On a system with 2 GPU Drivers (discrete:0, discrete:1) and 1 NPU Driver, where the default order is : Discrete:0, Discrete:1, NPU, this setting will change the order to:
+
+   - Discrete:1, NPU:0, Discrete:0
+   - Index 0 used in zer == Discrete:1
+
+2. ``ZEL_DRIVERS_ORDER = 2,0``
+
+   On a system with 2 GPU Drivers (discrete, integrated) and 1 NPU Driver, where the default order is : Discrete, integrated, NPU, this setting will change the order to:
+
+   - NPU, Discrete, Integrated
+   - Index 0 used in zer == NPU
+
+3. ``ZEL_DRIVERS_ORDER = GPU:1, NPU:0``
+
+   On a system with 2 GPU Drivers (discrete, integrated) and 1 NPU Driver, where the default order is : Discrete, Integrated, NPU, and the indexes per type are:
+
+   - GPU: Discrete, Integrated
+   - NPU: NPU
+
+   Resulting order:
+
+   - Integrated, NPU, Discrete
+   - Index 0 used in zer == Integrated
+
+4. ``ZEL_DRIVERS_ORDER = NPU``
+
+   On a system with 2 GPU Drivers (discrete, integrated) and 1 NPU Driver, where the default order is : Discrete, integrated, NPU, this setting will change the order to:
+
+   - NPU, Discrete, Integrated
+   - Index 0 used in zer == NPU
+
+**Device Discovery Tool**
+
+For debugging and system inspection purposes, you can use the ``show_devices_l0`` tool from the Intel compute-benchmarks repository to easily view driver information and device properties on your system:
+
+.. parsed-literal::
+
+   # Clone and build the compute-benchmarks repository
+   git clone https://github.com/intel/compute-benchmarks.git
+   cd compute-benchmarks
+   mkdir build && cd build
+   cmake ..
+   make show_devices_l0
+
+   # Run the tool to display driver index, driver type, and device information
+   ./source/tools/show_devices_l0
+
+This tool will display:
+
+- Driver index and driver type for each Level-Zero driver
+- Device properties including device type, name, and capabilities
+- Sub-device information if available
+- Memory properties and other device-specific details
+
+The ``show_devices_l0`` tool provides a convenient way to inspect the Level-Zero driver and device hierarchy, which is particularly useful when configuring driver ordering with the ``ZEL_DRIVERS_ORDER`` environment variable.
 
 
 Device Hierarchy
@@ -2260,7 +2709,7 @@ The following code examples demonstrate how to use the memory IPC APIs:
 
        // Method of sending to receiving process is not defined by Level-Zero:
        send_to_receiving_process(hIPC);
-       
+
 
 2. Next, the allocation is received and un-packaged on the receiving
    process:
@@ -2273,7 +2722,7 @@ The following code examples demonstrate how to use the memory IPC APIs:
 
        void* dptr = nullptr;
        ${x}MemOpenIpcHandle(hContext, hDevice, hIPC, 0, &dptr);
-       
+
 
 3. Each process may now refer to the same device memory allocation via its ``dptr``.
    Note, there is no guaranteed address equivalence for the values of ``dptr`` in each process.
@@ -2283,7 +2732,7 @@ The following code examples demonstrate how to use the memory IPC APIs:
 .. parsed-literal::
 
        ${x}MemCloseIpcHandle(hContext, dptr);
-       
+
 
 %if _version_compare_gequal(ver, "1.6"):
 5. Finally, return the IPC handle to the driver with  ${x}MemPutIpcHandle and

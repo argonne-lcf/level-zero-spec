@@ -6,7 +6,7 @@ env:
   http_proxy: http://proxy-dmz.intel.com:912
   https_proxy: http://proxy-dmz.intel.com:912
   DOCKER_BUILDKIT: '1'
-  VER: '1.13'
+  VER: '1.15'
 
 jobs:
   build:
@@ -43,7 +43,7 @@ jobs:
           -w $PWD/spec-head/scripts \
           -e TZ=UTC \
           ghcr.io/oneapi-src/spec-build:latest \
-          python3 ./run.py --debug --html '--!build' --ver $VER
+          python3 ./run.py --debug '--html' '--rst' '--!build' --ver $VER
     - name: Generate spec-base artifacts
       run: | #bash
         docker run \
@@ -52,7 +52,7 @@ jobs:
           -w $PWD/spec-base/scripts \
           -e TZ=UTC \
           ghcr.io/oneapi-src/spec-build:latest \
-          python3 ./run.py --debug '--!build' --ver $VER
+          python3 ./run.py --debug '--html' '--rst' '--!build' --ver $VER
     - name: Determine if there is a diff between header files
       id: include-diff
       run: | #bash
@@ -85,7 +85,7 @@ jobs:
       run:  echo 'Artifact URL is ${{ steps.upload-diff-artifact.outputs.artifact-url }}'
     - name: Write comment to PR
       if: steps.include-diff.outputs.diff == '1'
-      uses: actions/github-script@v6
+      uses: actions/github-script@v7
       with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -96,13 +96,143 @@ jobs:
               repo: context.repo.repo,
               body: "The Level Zero header diff can be found [here](${{ steps.upload-diff-artifact.outputs.artifact-url }})."
             });
+    - name: Determine if there is a diff between RST files
+      id: rst-diff
+      run: | #bash
+        if git diff --quiet --exit-code -- spec-head/docs/source spec-base/docs/source; then
+            echo "diff=0" >> $GITHUB_OUTPUT
+        else
+            echo "diff=1" >> $GITHUB_OUTPUT
+        fi
+    - name: Get RST diff
+      if: steps.rst-diff.outputs.diff == '1'
+      run: git diff --no-index spec-base/docs/source spec-head/docs/source > rst-diff.patch || true
+    - name: Write comment with formatting to RST_DIFF_COMMENT
+      if: steps.rst-diff.outputs.diff == '1'
+      shell: python3 {0}
+      run: |
+        import os
+        with open('rst-diff.patch', 'r') as f:
+            diff_content = f.read()
+        diff_comment = f"```diff\n{diff_content}\n```"
+        with open('rst_results_comment.txt', 'w') as results_file:
+            results_file.write(diff_comment)
+    - uses: actions/upload-artifact@v4
+      if: steps.rst-diff.outputs.diff == '1'
+      id: upload-rst-diff-artifact
+      with:
+        name: Level Zero RST Diff
+        path: rst_results_comment.txt
+    - name: Output RST artifact URL
+      if: steps.rst-diff.outputs.diff == '1'
+      run:  echo 'RST Artifact URL is ${{ steps.upload-rst-diff-artifact.outputs.artifact-url }}'
+    - name: Write RST diff comment to PR
+      if: steps.rst-diff.outputs.diff == '1'
+      uses: actions/github-script@v7
+      with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            [, pullRequestId] = /refs\/pull\/(\d+)\/merge/g.exec(context.ref);
+            github.rest.issues.createComment({
+              issue_number: pullRequestId,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: "The Level Zero RST diff can be found [here](${{ steps.upload-rst-diff-artifact.outputs.artifact-url }})."
+            });
+    - name: Determine if there is a diff between HTML files
+      id: html-diff
+      run: | #bash
+        if git diff --quiet --exit-code -- spec-head/docs/html spec-base/docs/html; then
+            echo "diff=0" >> $GITHUB_OUTPUT
+        else
+            echo "diff=1" >> $GITHUB_OUTPUT
+        fi
+    - name: Get HTML diff
+      if: steps.html-diff.outputs.diff == '1'
+      run: git diff --no-index spec-base/docs/html spec-head/docs/html > html-diff.patch || true
+    - name: Write comment with formatting to HTML_DIFF_COMMENT
+      if: steps.html-diff.outputs.diff == '1'
+      shell: python3 {0}
+      run: |
+        import os
+        with open('html-diff.patch', 'r') as f:
+            diff_content = f.read()
+        diff_comment = f"```diff\n{diff_content}\n```"
+        with open('html_results_comment.txt', 'w') as results_file:
+            results_file.write(diff_comment)
+    - uses: actions/upload-artifact@v4
+      if: steps.html-diff.outputs.diff == '1'
+      id: upload-html-diff-artifact
+      with:
+        name: Level Zero HTML Diff
+        path: html_results_comment.txt
+    - name: Output HTML artifact URL
+      if: steps.html-diff.outputs.diff == '1'
+      run:  echo 'HTML Artifact URL is ${{ steps.upload-html-diff-artifact.outputs.artifact-url }}'
+    - name: Write HTML diff comment to PR
+      if: steps.html-diff.outputs.diff == '1'
+      uses: actions/github-script@v7
+      with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            [, pullRequestId] = /refs\/pull\/(\d+)\/merge/g.exec(context.ref);
+            github.rest.issues.createComment({
+              issue_number: pullRequestId,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: "The Level Zero HTML diff can be found [here](${{ steps.upload-html-diff-artifact.outputs.artifact-url }})."
+            });
+    - name: Upload HTML documentation artifacts for preview
+      if: steps.html-diff.outputs.diff == '1'
+      uses: actions/upload-artifact@v4
+      id: upload-html-docs
+      with:
+        name: html-documentation-preview
+        path: |
+          spec-head/docs/html/
+          spec-base/docs/html/
+        retention-days: 30
+    - name: Comment with HTML preview info
+      if: steps.html-diff.outputs.diff == '1'
+      uses: actions/github-script@v7
+      with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const branchName = context.payload.pull_request.head.ref;
+            const repoOwner = context.repo.owner;
+            const repoName = context.repo.repo;
+            
+            // Check if custom domain is configured (set in workflow env or repo settings)
+            const customDomain = process.env.PAGES_CUSTOM_DOMAIN || '';
+            const baseUrl = customDomain 
+              ? `https://${customDomain}` 
+              : `https://${repoOwner}.github.io/${repoName}`;
+            
+            let body = "## 📚 HTML Documentation Preview\n\n";
+            body += "The HTML documentation artifacts have been uploaded. ";
+            body += "You can download and view them locally, or wait for the automatic GitHub Pages deployment.\n\n";
+            body += `**Artifact**: [Download HTML Documentation](${{ steps.upload-html-docs.outputs.artifact-url }})\n\n`;
+            body += "### 🔗 GitHub Pages Links (after deployment):\n\n";
+            body += `- **This PR #${prNumber} (branch: \`${branchName}\`)**: ${baseUrl}/pr-${prNumber}/\n`;
+            body += `- **Master branch (base)**: ${baseUrl}/master/\n`;
+            body += `- **All versions**: ${baseUrl}/\n\n`;
+            body += "*Note: GitHub Pages links will be available after the deploy-docs workflow completes.*";
+            
+            github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
     - name: Checkout loader-head
       uses: actions/checkout@v4
       with:
         clean: true
-        repository: oneapi-src/level-zero
+        repository: intel-innersource/libraries.compute.oneapi.level-zero.loader
         ref: master
         path: loader-head
+        token: ${{ secrets.LOADER_INNERSOURCE_TOKEN }}
     - name: Checkout loader-base
       uses: actions/checkout@v4
       with:
@@ -110,23 +240,8 @@ jobs:
         repository: oneapi-src/level-zero
         ref: master
         path: loader-base
+        token: ${{ secrets.LOADER_INNERSOURCE_TOKEN }}
     - uses: intel-sandbox/action-setup-jq@main
-    - name: Copy head include files
-      working-directory: spec-head
-      run: | #bash
-        set -o pipefail
-        jq -r '.[] | select(.|test("^../include"))' scripts/generated.json |
-        cut -c 4- |
-        sort |
-        xargs -I{} cp -v ./{} ../loader-head/{}
-    - name: Copy base include files
-      working-directory: spec-base
-      run: | #bash
-        set -o pipefail
-        jq -r '.[] | select(.|test("^../include"))' scripts/generated.json |
-        cut -c 4- |
-        sort |
-        xargs -I{} cp -v ./{} ../loader-base/{}
     - name: json2src head
       run: | #bash
         docker run \
@@ -136,15 +251,14 @@ jobs:
           -w $PWD/loader-head \
           ghcr.io/oneapi-src/spec-build:latest \
           python3 ./scripts/json2src.py --ver $VER . < spec-head/scripts/input.json
-    - name: json2src base
+    - name: Copy head include files
+      working-directory: spec-head
       run: | #bash
-        docker run \
-          --rm \
-          --interactive \
-          -v $PWD:$PWD \
-          -w $PWD/loader-base \
-          ghcr.io/oneapi-src/spec-build:latest \
-          python3 ./scripts/json2src.py --ver $VER . < spec-base/scripts/input.json
+        set -o pipefail
+        jq -r '.[] | select(.|test("^../include"))' scripts/generated.json |
+        cut -c 4- |
+        sort |
+        xargs -I{} cp -v ./{} ../loader-head/{}
     - name: Determine if there is a diff between loader source files
       id: loader-source-diff
       run: | #bash
@@ -177,7 +291,7 @@ jobs:
       run:  echo 'Artifact URL is ${{ steps.upload-loader-diff-artifact.outputs.artifact-url }}'
     - name: Write loader diff comment to PR
       if: steps.loader-source-diff.outputs.diff == '1'
-      uses: actions/github-script@v6
+      uses: actions/github-script@v7
       with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -259,7 +373,19 @@ jobs:
         wget https://github.com/lvc/abi-compliance-checker/tarball/master -O abi-compliance-checker.tar.gz
         tar -xzf abi-compliance-checker.tar.gz
         chmod +x lvc-abi-compliance-checker-*/abi-compliance-checker.pl
+    - name: Fix API_CURRENT_VERSION check
+      id: fix_current_version
+      continue-on-error: true
+      run: |
+        docker run \
+          --rm \
+          -v $PWD:$PWD \
+          -w $PWD \
+          ghcr.io/oneapi-src/spec-build:latest \
+          python3 spec-head/scripts/update_ze_api_version.py base.dump head.dump
     - name: Compare dumps
+      id: abi-check
+      continue-on-error: true
       run: |
         docker run \
           --rm \
@@ -271,21 +397,66 @@ jobs:
             -old base.dump \
             -new head.dump \
             -report-path report.html
+    - name: Check for reviewer approval of ABI failure
+      id: check-approval
+      if: steps.abi-check.outcome == 'failure'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const { data: reviews } = await github.rest.pulls.listReviews({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: context.issue.number,
+          });
+          
+          const approvedReviews = reviews.filter(review => 
+            review.state === 'APPROVED' && 
+            review.body && 
+            review.body.toLowerCase().includes('abi-failure-approved')
+          );
+          
+          if (approvedReviews.length > 0) {
+            console.log('ABI failure has been approved by reviewer');
+            core.setOutput('approved', 'true');
+          } else {
+            console.log('No reviewer approval found for ABI failure');
+            core.setOutput('approved', 'false');
+          }
     - uses: actions/upload-artifact@v4
       id: abi-report-artifact
+      continue-on-error: true
       with:
         name: abi-report
         path: report.html
     - name: Write loader ABI Report comment to PR
-      if: "steps.loader-source-diff.outputs.diff == '1' || steps.include-diff.outputs.diff == '1'"
-      uses: actions/github-script@v6
+      continue-on-error: true
+      if: "steps.loader-source-diff.outputs.diff == '1' || steps.include-diff.outputs.diff == '1' || steps.rst-diff.outputs.diff == '1' || steps.html-diff.outputs.diff == '1'"
+      uses: actions/github-script@v7
       with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             [, pullRequestId] = /refs\/pull\/(\d+)\/merge/g.exec(context.ref);
+            const abiStatus = "${{ steps.abi-check.outcome }}";
+            let body = "The Level Zero ABI Report can be found [here](${{ steps.abi-report-artifact.outputs.artifact-url }}).";
+            
+            if (abiStatus === 'failure') {
+              body += "\n\n⚠️ **ABI Compliance Check Failed**\n\n";
+              body += "If this ABI change is intentional and acceptable, a reviewer can approve it by:\n";
+              body += "1. Reviewing the ABI report above\n";
+              body += "2. Leaving an **approval review** with the keyword `abi-failure-approved` in the comment\n\n";
+              body += "This will allow the workflow to pass despite the ABI compliance failure.";
+            }
+            
             github.rest.issues.createComment({
               issue_number: pullRequestId,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: "The Level Zero ABI Report can be found [here](${{ steps.abi-report-artifact.outputs.artifact-url }})."
+              body: body
             });
+    - name: Fail if ABI check failed and not approved
+      if: steps.abi-check.outcome == 'failure' && steps.check-approval.outputs.approved != 'true'
+      run: |
+        echo "ABI compliance check failed and no reviewer approval found."
+        echo "To approve this failure, a reviewer must leave an approval review containing 'abi-failure-approved' in the comment."
+        exit 1

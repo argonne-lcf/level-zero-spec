@@ -86,8 +86,8 @@ class class_traits:
     Extracts traits from a type name
 """
 class type_traits:
-    RE_HANDLE   = r"(.*)handle_t"
-    RE_IPC      = r"(.*)ipc(.*)handle_t"
+    RE_HANDLE   = r"(.*)handle_t$"
+    RE_IPC      = r"(.*)ipc(.*)handle_t$"
     RE_POINTER  = r"(.*\w+)\*+"
     RE_DESC     = r"(.*)desc_t.*"
     RE_PROPS    = r"(.*)properties_t.*"
@@ -397,6 +397,9 @@ Public:
     if comment, then insert doxygen '::' notation at beginning (for autogen links)
 """
 def subt(namespace, tags, string, comment=False, remove_namespace=False):
+    if string is None:
+        return ""
+    string = str(string)  # Convert to string to handle int/other types
     for key, value in tags.items():
         if remove_namespace:
             repl = ""                                                           # remove namespace; e.g. "$x" -> ""
@@ -607,7 +610,7 @@ def make_etor_lines(namespace, tags, obj, py=False, meta=None):
             prologue = ""
 
     if not py:
-        lines.append("%sFORCE_UINT32 = 0x7fffffff, ///< Value marking end of %s* ENUMs"%(make_enum_name(namespace, tags, obj)[:-1].upper(), make_enum_name(namespace, tags, obj)[:-1].upper()))
+        lines.append("%sFORCE_UINT32 = 0x7fffffff ///< Value marking end of %s* ENUMs"%(make_enum_name(namespace, tags, obj)[:-1].upper(), make_enum_name(namespace, tags, obj)[:-1].upper()))
 
     return lines
 
@@ -662,6 +665,40 @@ def make_member_name(namespace, tags, item, prefix="", remove_array=False):
 
 """
 Public:
+    returns a list of strings for each member of a structure with the default values.
+"""
+def make_member_lines_with_defaults(namespace, tags, obj, prefix="", py=False, meta=None):
+    lines = []
+    if 'members' not in obj:
+        return lines
+
+    for i, item in enumerate(obj['members']):
+        name = make_member_name(namespace, tags, item, prefix, remove_array=py)
+
+        if py:
+            tname = get_ctype_name(namespace, tags, item)
+        else:
+            tname = _get_type_name(namespace, tags, obj, item)
+
+        init = "0"
+        if 'init' in item and item['init'] is not None:
+            init = subt(namespace, tags, str(item['init']))
+
+        if py:
+            delim = "," if i < (len(obj['members'])-1) else ""
+            prologue = "(\"%s\", %s)%s"%(name, tname, delim)
+        else:
+            prologue = "%s,"%(init)
+
+        comment_style = "##" if py else "///<"
+        ws_count = 64 if py else 72
+        for line in split_line(subt(namespace, tags, item['name'], True), 70):
+            lines.append("%s%s %s"%(append_ws(prologue, ws_count), comment_style, line))
+            prologue = ""
+    return lines
+
+"""
+Public:
     returns a list of strings for each member of a structure or class
     c++ format: "TYPE NAME = INIT, ///< DESCRIPTION"
     python format: "("NAME", TYPE)" ## DESCRIPTION"
@@ -709,35 +746,35 @@ def make_param_lines(namespace, tags, obj, py=False, decl=False, meta=None, form
     lines = []
 
     params = obj['params']
+    if isinstance(obj['params'], list):
+        for i, item in enumerate(params):
+            name = _get_param_name(namespace, tags, item)
+            if py:
+                tname = get_ctype_name(namespace, tags, item)
+            else:
+                tname = _get_type_name(namespace, tags, obj, item)
 
-    for i, item in enumerate(params):
-        name = _get_param_name(namespace, tags, item)
-        if py:
-            tname = get_ctype_name(namespace, tags, item)
-        else:
-            tname = _get_type_name(namespace, tags, obj, item)
+            words = []
+            if "type*" in format:
+                words.append(tname+"*")
+                name = "p"+name
+            elif "type" in format:
+                words.append(tname)
+            if "name" in format:
+                words.append(name)
 
-        words = []
-        if "type*" in format:
-            words.append(tname+"*")
-            name = "p"+name
-        elif "type" in format:
-            words.append(tname)
-        if "name" in format:
-            words.append(name)
+            prologue = " ".join(words)
+            if "delim" in format:
+                if i < len(params)-1:
+                    prologue += delim
 
-        prologue = " ".join(words)
-        if "delim" in format:
-            if i < len(params)-1:
-                prologue += delim
-
-        if "desc" in format:
-            desc = item['desc']
-            for line in split_line(subt(namespace, tags, desc, True), 70):
-                lines.append("%s///< %s"%(append_ws(prologue, 72), line))
-                prologue = ""
-        else:
-            lines.append(prologue)
+            if "desc" in format:
+                desc = item['desc']
+                for line in split_line(subt(namespace, tags, desc, True), 70):
+                    lines.append("%s///< %s"%(append_ws(prologue, 72), line))
+                    prologue = ""
+            else:
+                lines.append(prologue)
 
     if "type" in format and len(lines) == 0 and not py:
         lines = ["void"]

@@ -9,7 +9,7 @@ from templates import helper as th
     X=x.upper()
 %>/*
  *
- * Copyright (C) 2019-2021 Intel Corporation
+ * Copyright (C) 2019-2025 Intel Corporation
  *
  * SPDX-License-Identifier: MIT
  *
@@ -99,13 +99,19 @@ typedef ${obj['type']} _${th.make_type_name(n, tags, obj)}
     %endfor
 
 } ${th.make_type_name(n, tags, obj)};
+%elif re.match(r"default_struct", obj['type']):
+static const ${obj['base']} ${th.make_type_name(n, tags, obj)} = {
+    %for line in th.make_member_lines_with_defaults(n, tags, obj):
+    ${line}
+    %endfor
+};
 ## FUNCTION ###################################################################
 %elif re.match(r"function", obj['type']):
 /// 
 %for line in th.make_returns_lines(n, tags, obj, meta=meta):
 /// ${line}
 %endfor
-${X}_APIEXPORT ${x}_result_t ${X}_APICALL
+${X}_APIEXPORT ${obj['return_type']} ${X}_APICALL
 ${th.make_func_name(n, tags, obj)}(
     %for line in th.make_param_lines(n, tags, obj):
     ${line}
@@ -146,7 +152,7 @@ typedef struct _${th.make_type_name(n, tags, obj)} ${th.make_type_name(n, tags, 
 #endif
 %endif
 %endfor # spec in specs
-%if n not in ["zet", "zes"]:
+%if n not in ["zet", "zes", "zer"]:
 // Intel ${tags['$OneApi']} Level-Zero API Callbacks
 #if !defined(__GNUC__)
 #pragma region callbacks
@@ -181,7 +187,7 @@ typedef struct _${th.make_pfncb_param_type(n, tags, obj)}
 %endif
 typedef void (${X}_APICALL *${th.make_pfncb_type(n, tags, obj)})(
     ${th.make_pfncb_param_type(n, tags, obj)}* params,
-    ${x}_result_t result,
+    ${obj['return_type']} result,
     void* pTracerUserData,
     void** ppTracerInstanceUserData
     );
@@ -208,6 +214,7 @@ typedef struct _${tbl['type']}
 } ${tbl['type']};
 
 %endfor
+%if namespace == x:
 ///////////////////////////////////////////////////////////////////////////////
 /// @brief Container for all callbacks
 typedef struct _ze_callbacks_t
@@ -230,10 +237,11 @@ typedef struct _ze_callbacks_t
     ze_mem_callbacks_t                  Mem;
     ze_virtual_mem_callbacks_t          VirtualMem;
 } ze_callbacks_t;
+%endif
 #if !defined(__GNUC__)
 #pragma endregion
 #endif
-%endif # not in ["zet", "zes"]:
+%endif # not in ["zet", "zes", "zer"]:
 
 #if defined(__cplusplus)
 } // extern "C"

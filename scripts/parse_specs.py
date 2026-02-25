@@ -125,6 +125,18 @@ def _validate_doc(f, d, tags, line_num):
     def __validate_name(d, key, tags, case='lower', prefix=""):
         if not isinstance(d[key], str):
             raise Exception(prefix+"'%s' must be a string: '%s'"%(key, type(d[key])))
+        if isinstance(d.get('type'), str) and d['type'] == 'default_struct' and key == 'name':
+            # Name must start with Default, then two uppercase letters, and be camel case
+            if not any(d[key].startswith(tag + 'Default') for tag in ['$r', '$t', '$x', '$s']):
+                raise Exception(prefix+"'%s' must start with one of ['$rDefault', '$tDefault', '$xDefault', '$sDefault']: '%s'" % (key, d[key]))
+            if d[key].endswith('_t'):
+                raise Exception(prefix+"'%s' must not end with '_t': '%s'" % (key, d[key]))
+            name = _subt(d[key], tags)
+            print("Validating default_struct name '%s'..." % name)
+            # Check that name is CamelCase (starts with uppercase, contains at least one lowercase, no underscores)
+            if (name.isupper() or name.islower()):
+                raise Exception(prefix+"'%s' must be CamelCase: '%s'" % (key, name))
+            return  # Early return for default_struct case
 
         if not __validate_tag(d, key, tags, case):
             raise Exception(prefix+"'%s' must start with {%s}: '%s'"%(key, ", ".join([x.upper() if case == 'upper' else x for x in tags if x != "$OneApi"]), d[key]))
@@ -262,8 +274,14 @@ def _validate_doc(f, d, tags, line_num):
         if 'params' not in d:
             raise Exception("'function' requires the following sequence of mappings: {`params`}")
 
+        runtime = False
+        if 'class' in d and '$r' in d['class']:
+            runtime = True
         if not isinstance(d['params'], list):
-            raise Exception("'params' must be a sequence: '%s'"%type(d['params']))
+            if not runtime:
+                raise Exception("'params' must be a sequence: '%s'"%type(d['params']))
+            else:
+                return
 
         d_ver = d.get('version', default_version)
         max_ver = d_ver
@@ -286,7 +304,10 @@ def _validate_doc(f, d, tags, line_num):
             if min['[out]'] and ("[in]" == annotation or "[in,out]" == annotation):
                 raise Exception(prefix+"'%s' must come before '[out]'"%annotation)
 
-            if d.get('decl') != "static" and i == 0 and not type_traits.is_handle(item['type']):
+            runtime = False
+            if 'class' in d and '$r' in d['class']:
+                runtime = True
+            if d.get('decl') != "static" and i == 0 and not runtime and not type_traits.is_handle(item['type']):
                 raise Exception(prefix+"'type' must be '*_handle_t': %s"%item['type'])
 
             if item['type'].endswith("flag_t"):
@@ -365,6 +386,17 @@ def _validate_doc(f, d, tags, line_num):
             __validate_ordinal(d)
             __validate_version(d)
 
+        elif 'default_struct' == d['type']:
+            print("Validating default_struct '%s'..." % d['name'])
+            if ('desc' not in d) or ('name' not in d):
+                raise Exception("'%s' requires the following scalar fields: {`desc`, `name`}"%d['type'])
+
+            __validate_name(d, 'name', tags)
+            __validate_members(d, tags)
+            __validate_details(d)
+            __validate_ordinal(d)
+            __validate_version(d)
+
         elif 'function' == d['type']:
             if ('desc' not in d) or ('name' not in d):
                 raise Exception("'function' requires the following scalar fields: {`desc`, `name`}")
@@ -394,6 +426,88 @@ def _validate_doc(f, d, tags, line_num):
         print("Specification Validation Error:")
         print("%s(%s): %s!"%(os.path.abspath(f), line_num, msg))
         return False
+
+"""
+    validate that all structs have an associated _structure_type_t enum entry
+"""
+def _validate_struct_enum_mapping(specs, tags):
+    """
+    Validates that for each struct, there exists a corresponding enum entry in a _structure_type_t enum.
+    The validation checks that the enum entry's 'desc' field matches the struct name.
+    
+    This function also validates structs that have a "base" field, ensuring they have their own
+    enum entries and are not just relying on their base struct's enum entry.
+    
+    Excludes certain struct types that don't require structure type enum entries:
+    - kernel_max_group_size_properties_ext_t
+    - Base structs themselves (*_base_*_t) 
+    - Simple data container structs that don't have stype fields
+    """
+    structs_info = []
+    structure_type_enums = {}
+    
+    # Collect all struct names (including base info) and structure_type enums
+    for spec in specs:
+        for obj in spec['objects']:
+            if obj['type'] == 'struct':
+                structs_info.append({
+                    'name': obj['name'],
+                    'base': obj.get('base', None)
+                })
+            elif obj['type'] == 'enum' and obj['name'].endswith('_structure_type_t'):
+                # Collect enum entries with their desc fields
+                structure_type_enums[obj['name']] = [
+                    {'name': etor['name'], 'desc': etor.get('desc', '')} 
+                    for etor in obj['etors']
+                ]
+    
+    # Check each struct has a corresponding enum entry
+    for struct_info in structs_info:
+        struct_name = struct_info['name']
+        base_struct = struct_info['base']
+        
+        # Get namespace from struct name for base validation
+        namespace = re.sub(r"(\$[a-z])\w+", r"\1", struct_name)
+        base_struct_names = [
+            "%s_base_desc_t" % namespace,
+            "%s_base_properties_t" % namespace,
+            "%s_base_cb_params_t" % namespace,
+            "%s_driver_extension_properties_t" % namespace
+        ]
+        
+        # Skip validation for base structs themselves (they don't need enum entries)
+        if struct_name in base_struct_names:
+            continue
+
+        if base_struct == None:
+            continue  # Skip structs without a base struct
+
+        if struct_name.endswith("_kernel_max_group_size_properties_ext_t"):
+            continue  # Skip specific structs that don't require enum entries
+
+        # Check if any enum entry's desc field matches this struct name
+        found = False
+        matching_enum_entry = None
+        for enum_name, enum_entries in structure_type_enums.items():
+            for enum_entry in enum_entries:
+                if enum_entry['desc'] == struct_name:
+                    found = True
+                    matching_enum_entry = enum_entry['name']
+                    break
+            if found:
+                break
+        
+        if not found:
+            base_info = " (inherits from '%s')" % base_struct if base_struct else ""
+            print("Struct-Enum Mapping Validation Error:")
+            print("Struct '%s'%s does not have a corresponding enum entry with matching 'desc' field in any '*_structure_type_t' enum!" % (struct_name, base_info))
+            print("Available enum entries in structure_type_t enums:")
+            for enum_name, enum_entries in structure_type_enums.items():
+                entry_names = [entry['name'] for entry in enum_entries[:5]]
+                print("  %s: %s" % (enum_name, ", ".join(entry_names) + ("..." if len(enum_entries) > 5 else "")))
+            return False
+    
+    return True
 
 """
     filters object by version
@@ -567,11 +681,12 @@ def _filter_version(d, max_ver):
         d['etors'] = flt
 
     elif 'function' == type:
-        for p in d['params']:
-            ver = p.get('version', default_version)
-            if _version_compare_lequal(ver, max_ver):
-                flt.append(__filter_desc(p))
-        d['params'] = flt
+        if isinstance(d['params'], list):
+            for p in d['params']:
+                ver = p.get('version', default_version)
+                if _version_compare_lequal(ver, max_ver):
+                    flt.append(__filter_desc(p))
+            d['params'] = flt
 
     elif 'struct' == type or 'union' == type or 'class' == type:
         for m in d.get('members',[]):
@@ -674,12 +789,23 @@ def _generate_meta(d, ordinal, meta):
 
         elif 'function' == type:
             meta[type][name]['params'] = []
-            for p in d['params']:
-                meta[type][name]['params'].append({
-                    'type':p['type']
-                    })
+            if isinstance(d['params'], list):
+                for p in d['params']:
+                    meta[type][name]['params'].append({
+                        'type':p['type']
+                        })
 
         elif 'struct' == type or 'union' == type:
+            meta[type][name]['members'] = []
+            for m in d['members']:
+                meta[type][name]['members'].append({
+                    'type': m['type'],
+                    'name': m['name'],
+                    'desc': m['desc'],
+                    'init': m.get('init')
+                    })
+
+        elif 'default_struct' == type:
             meta[type][name]['members'] = []
             for m in d['members']:
                 meta[type][name]['members'].append({
@@ -740,8 +866,9 @@ def _generate_hash(obj):
         hash = hashlib.sha256()
         # hashcode of function signature...
         hash.update(obj['name'].encode())
-        for p in obj['params']:
-            hash.update(p['type'].encode())
+        if isinstance(obj['params'], list):
+            for p in obj['params']:
+                hash.update(p['type'].encode())
         # hashcode of class
         if 'class' in obj:
             hash.update(obj['class'].encode())
@@ -775,66 +902,137 @@ def _generate_returns(obj, meta):
             {"$X_RESULT_ERROR_UNINITIALIZED":[]},
             {"$X_RESULT_ERROR_DEVICE_LOST":[]},
             {"$X_RESULT_ERROR_OUT_OF_HOST_MEMORY":[]},
-            {"$X_RESULT_ERROR_OUT_OF_DEVICE_MEMORY":[]}
+            {"$X_RESULT_ERROR_OUT_OF_DEVICE_MEMORY":[]},
+            {"$X_RESULT_ERROR_INVALID_ARGUMENT":[]},
+            {"$X_RESULT_ERROR_UNSUPPORTED_FEATURE":[]},
+            {"$X_RESULT_ERROR_DEPENDENCY_UNAVAILABLE":[]},
+            {"$X_RESULT_ERROR_INSUFFICIENT_PERMISSIONS":[]},
+            {"$X_RESULT_ERROR_NOT_AVAILABLE":[]},
+            {"$X_RESULT_ERROR_DEVICE_REQUIRES_RESET":[]},
+            {"$X_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE":[]},
+            {"$X_RESULT_ERROR_UNKNOWN":[]}
             ]
 
         # special function for appending to our list of dicts; avoiding duplicates
         def _append(lst, key, val):
             idx = next((i for i, v in enumerate(lst) if v.get(key)), len(lst))
             if idx == len(lst):
-                rets.append({key:[]})
-            if val and val not in rets[idx][key]:
-                rets[idx][key].append(val)
+                lst.append({key:[]})
+            if val and val not in lst[idx][key]:
+                lst[idx][key].append(val)
 
         # generate results based on parameters
-        for item in obj['params']:
-            if not param_traits.is_optional(item) and not param_traits.is_mbz(item):
-                typename = type_traits.base(item['type'])
+        runtime = False
+        if 'class' in obj and '$r' in obj['class']:
+            runtime = True
+        no_params = False
+        if not isinstance(obj['params'], list) and runtime:
+            no_params = True
+        if not no_params:
+            for item in obj['params']:
+                if not param_traits.is_optional(item) and not param_traits.is_mbz(item):
+                    typename = type_traits.base(item['type'])
 
-                if type_traits.is_pointer(item['type']):
-                    _append(rets, "$X_RESULT_ERROR_INVALID_NULL_POINTER", "`nullptr == %s`"%item['name'])
+                    if type_traits.is_pointer(item['type']):
+                        _append(rets, "$X_RESULT_ERROR_INVALID_NULL_POINTER", "`nullptr == %s`"%item['name'])
 
-                elif type_traits.is_handle(item['type']) and not type_traits.is_ipc_handle(item['type']):
-                    _append(rets, "$X_RESULT_ERROR_INVALID_NULL_HANDLE", "`nullptr == %s`"%item['name'])
+                    elif type_traits.is_handle(item['type']) and not type_traits.is_ipc_handle(item['type']):
+                        _append(rets, "$X_RESULT_ERROR_INVALID_NULL_HANDLE", "`nullptr == %s`"%item['name'])
 
-                elif type_traits.is_enum(item['type'], meta):
-                    _append(rets, "$X_RESULT_ERROR_INVALID_ENUMERATION", "`%s < %s`"%(meta['enum'][typename]['max'], item['name']))
+                    elif type_traits.is_enum(item['type'], meta):
+                        _append(rets, "$X_RESULT_ERROR_INVALID_ENUMERATION", "`%s < %s`"%(meta['enum'][typename]['max'], item['name']))
+                        _append(rets, "$X_RESULT_ERROR_UNSUPPORTED_ENUMERATION", [])
 
-                if type_traits.is_descriptor(item['type']):
-                    # walk each entry in the desc for pointers and enums
-                    for i, m in enumerate(meta['struct'][typename]['members']):
-                        mtypename = type_traits.base(m['type'])
+                    if type_traits.is_descriptor(item['type']):
+                        # walk each entry in the desc for pointers and enums
+                        for i, m in enumerate(meta['struct'][typename]['members']):
+                            mtypename = type_traits.base(m['type'])
 
-                        if type_traits.is_pointer(m['type']) and not param_traits.is_optional({'desc': m['desc']}):
-                            _append(rets, "$X_RESULT_ERROR_INVALID_NULL_POINTER", "`nullptr == %s->%s`"%(item['name'], m['name']))
+                            if type_traits.is_pointer(m['type']) and not param_traits.is_optional({'desc': m['desc']}):
+                                _append(rets, "$X_RESULT_ERROR_INVALID_NULL_POINTER", "`nullptr == %s->%s`"%(item['name'], m['name']))
 
-                        elif type_traits.is_enum(m['type'], meta):
-                            if re.match(r"stype", m['name']):
-                                _append(rets, "$X_RESULT_ERROR_UNSUPPORTED_VERSION", "`%s != %s->stype`"%(re.sub(r"(\$\w)_(.*)_t.*", r"\1_STRUCTURE_TYPE_\2", typename).upper(), item['name']))
-                            else:
-                                if "$x_init_driver_type_flags_t" == mtypename:
-                                    _append(rets, "$X_RESULT_ERROR_INVALID_ENUMERATION", "`%s == %s->%s`"%('0x0', item['name'], m['name']))
+                            elif type_traits.is_enum(m['type'], meta):
+                                if re.match(r"stype", m['name']):
+                                    _append(rets, "$X_RESULT_ERROR_UNSUPPORTED_VERSION", "`%s != %s->stype`"%(re.sub(r"(\$\w)_(.*)_t.*", r"\1_STRUCTURE_TYPE_\2", typename).upper(), item['name']))
                                 else:
-                                    _append(rets, "$X_RESULT_ERROR_INVALID_ENUMERATION", "`%s < %s->%s`"%(meta['enum'][mtypename]['max'], item['name'], m['name']))
+                                    if "$x_init_driver_type_flags_t" == mtypename:
+                                        _append(rets, "$X_RESULT_ERROR_INVALID_ENUMERATION", "`%s == %s->%s`"%('0x0', item['name'], m['name']))
+                                        _append(rets, "$X_RESULT_ERROR_UNSUPPORTED_ENUMERATION", [])
+                                    else:
+                                        _append(rets, "$X_RESULT_ERROR_INVALID_ENUMERATION", "`%s < %s->%s`"%(meta['enum'][mtypename]['max'], item['name'], m['name']))
+                                        _append(rets, "$X_RESULT_ERROR_UNSUPPORTED_ENUMERATION", [])
 
-                elif type_traits.is_properties(item['type']):
-                    # walk each entry in the properties
-                    for i, m in enumerate(meta['struct'][typename]['members']):
-                        if type_traits.is_enum(m['type'], meta):
-                            if re.match(r"stype", m['name']):
-                                _append(rets, "$X_RESULT_ERROR_UNSUPPORTED_VERSION", "`%s != %s->stype`"%(re.sub(r"(\$\w)_(.*)_t.*", r"\1_STRUCTURE_TYPE_\2", typename).upper(), item['name']))
+                    elif type_traits.is_properties(item['type']):
+                        # walk each entry in the properties
+                        for i, m in enumerate(meta['struct'][typename]['members']):
+                            if type_traits.is_enum(m['type'], meta):
+                                if re.match(r"stype", m['name']):
+                                    _append(rets, "$X_RESULT_ERROR_UNSUPPORTED_VERSION", "`%s != %s->stype`"%(re.sub(r"(\$\w)_(.*)_t.*", r"\1_STRUCTURE_TYPE_\2", typename).upper(), item['name']))
 
+        return_type = None
+        return_desc = None
+        set_type_returns = []
         # finally, append all user entries
         for item in obj.get('returns', []):
+            if item == 'type':
+                for key, value in obj.get('returns', {}).items():
+                    if key == 'type':
+                        return_type = value
+                        continue
+                    if key == 'desc':
+                        return_desc = value
+                        continue
+                    if key == 'success':
+                        success_key = value
+                        _append(set_type_returns, success_key, None)
+                        continue
+                    if key == 'failure':
+                        if isinstance(value, dict):
+                            # Handle dictionary format: {'key': ['val1', 'val2']}
+                            for key, values in value.items():
+                                for val in values:
+                                    _append(set_type_returns, key, val)
+                        elif isinstance(value, list):
+                            # Handle list format: ['key1', {'key2': ['val1', 'val2']}]
+                            for item in value:
+                                if isinstance(item, str):
+                                    _append(set_type_returns, item, None)
+                                elif isinstance(item, dict):
+                                    for key, values in item.items():
+                                        for val in values:
+                                            _append(set_type_returns, key, val)
+                        continue
+                break
             if isinstance(item, dict):
                 for key, values in item.items():
                     for val in values:
                         _append(rets, key, val)
             else:
                 _append(rets, item, None)
+        # Remove duplicate result entries keeping the last (user-specified) occurrence.
+        # Each entry is expected to be a single-key dict like {"$X_RESULT_ERROR_INVALID_ARGUMENT": [...]}
+        if not return_type:  # Only dedupe the default path
+            seen = set()
+            dedup = []
+            for entry in reversed(rets):
+                if isinstance(entry, dict) and len(entry) == 1:
+                    key = next(iter(entry))
+                    if key in seen:
+                        continue  # drop earlier duplicate (default at top)
+                    seen.add(key)
+                dedup.append(entry)
+            rets = list(reversed(dedup))
 
         # update doc
-        obj['returns'] = rets
+        if return_type:
+            obj['return_type'] = return_type
+            obj['return_desc'] = return_desc
+            obj['returns'] = set_type_returns
+            obj['return_fail_value'] = next(iter(set_type_returns[1]))
+        else:
+            obj['return_type'] = "ze_result_t"
+            obj['return_desc'] = "[out] ze_result_t API result"
+            obj['returns'] = rets
     return obj
 
 """
@@ -902,7 +1100,6 @@ def parse(section, version, tags, meta, ref):
                 successful = False
                 continue
             if 'version' not in d:
-                print(d)
                 d['version'] = default_version
 
             d = _filter_version(d, version)
@@ -932,6 +1129,10 @@ def parse(section, version, tags, meta, ref):
     _generate_extra(specs, meta)
 
     ref = _generate_ref(specs, tags, ref)
+
+    # Validate struct-enum mappings after all documents are parsed
+    if not _validate_struct_enum_mapping(specs, tags):
+        successful = False
 
     print("Parsed %s files and found:"%len(specs))
     for key in meta:

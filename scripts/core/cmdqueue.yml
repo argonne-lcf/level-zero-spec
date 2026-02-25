@@ -29,6 +29,12 @@ etors:
             Application is not required to have the signal event of a given command being the wait event of
             the next to define an in-order list, and application is allowed to pass signal and wait events
             to each appended command to implement more complex dependency graphs.
+    - name: COPY_OFFLOAD_HINT
+      version: "1.14"
+      desc: |
+            To be used only when creating immediate command lists and only for compute queues.
+            Try to offload copy operations to different engines. This is only a hint.
+            Driver may ignore it per append call, based on platform capabilities or internal heuristics.
 --- #--------------------------------------------------------------------------
 type: enum
 desc: "Supported command queue modes"

@@ -17,6 +17,10 @@ Bandwidth Extension Properties
 API
 ----
 
+* Enumerations
+
+    * ${x}_bandwidth_properties_exp_version_t
+
 * Structures
 
 
@@ -46,6 +50,8 @@ latency for two logically connected accelerators accounts for link technology, n
 of hops between the accelerators, etc... The net physical bandwidth & physical latency between two
 accelerators are zero unless the accelerators are directly connected to each other by a fabric, and
 account for link technology, number of links, etc...
+
+The structure ${x}_copy_bandwidth_exp_properties_t is deprecated from version 1.14 onwards.
 
 The following pseudo-code demonstrates a sequence for obtaining the p2p bandwidth & latency between two devices:
 
@@ -89,13 +95,9 @@ The following pseudo-code demonstrates a sequence for obtaining the copy bandwid
 
     ${x}_command_queue_group_properties_t* cmdqueueGroupProperties = (${x}_command_queue_group_properties_t*)
         allocate(cmdqueueGroupCount * sizeof(${x}_command_queue_group_properties_t));
-    ${x}_copy_bandwidth_exp_properties_t* cmdqueueGroupBandwidth = (${x}_copy_bandwidth_exp_properties_t*)
-            allocate(cmdqueueGroupCount * sizeof(${x}_copy_bandwidth_exp_properties_t));
     for( uint32_t i = 0; i < cmdqueueGroupCount; ++i ) {
         cmdqueueGroupProperties[i].stype = ${X}_STRUCTURE_TYPE_COMMAND_QUEUE_GROUP_PROPERTIES;
         cmdqueueGroupProperties[i].pNext = &cmdqueueGroupBandwidth[i];
-        cmdqueueGroupBandwidth[i].stype = ${X}_STRUCTURE_TYPE_COPY_BANDWIDTH_EXP_PROPERTIES;
-        cmdqueueGroupBandwidth[i].pNext = nullptr;
     }
     ${x}DeviceGetCommandQueueGroupProperties(hDevice, &cmdqueueGroupCount, cmdqueueGroupProperties);
 

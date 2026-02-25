@@ -209,12 +209,20 @@ etors:
       value: "$X_MAKE_VERSION( 1, 13 )"
       desc: "version 1.13"
       version: "1.13"
+    - name: "1_14"
+      value: "$X_MAKE_VERSION( 1, 14 )"
+      desc: "version 1.14"
+      version: "1.14"
+    - name: "1_15"
+      value: "$X_MAKE_VERSION( 1, 15 )"
+      desc: "version 1.15"
+      version: "1.15"
 --- #--------------------------------------------------------------------------
 type: macro
 desc: "Current API version as a macro"
 version: "1.10"
 name: "$X_API_VERSION_CURRENT_M"
-value: "$X_MAKE_VERSION( 1, 13 )"
+value: "$X_MAKE_VERSION( 1, 15 )"
 --- #--------------------------------------------------------------------------
 type: function
 desc: "Returns the API version supported by the specified driver"
@@ -402,3 +410,25 @@ params:
     - type: "const char**"
       name: ppString
       desc: "[in,out] pointer to a null-terminated array of characters describing cause of error."
+--- #--------------------------------------------------------------------------
+type: function
+desc: "Retrieves handle to default context from the driver."
+version: "1.14"
+class: $xDriver
+name: GetDefaultContext
+details:
+    - "The implementation of this function should be lock-free."
+    - "This returned context contains all the devices available in the driver."
+    - "This function does not return error code, to get info about failure user may use $xDriverGetLastErrorDescription function."
+    - "In case of failure, this function returns null."
+    - "Details on the error can be retrieved using $xDriverGetLastErrorDescription function."
+params:
+    - type: $x_driver_handle_t
+      name: hDriver
+      desc: "[in] handle of the driver instance"
+returns:
+    type: "ze_context_handle_t"
+    desc: "handle of the context"
+    success: "handle of the default context"
+    failure:
+      - nullptr

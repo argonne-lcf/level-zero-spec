@@ -85,8 +85,24 @@ members:
 details:
     - "This structure may be passed to $xDeviceGetImageProperties via the pNext member of $x_device_image_properties_t."
 --- #--------------------------------------------------------------------------
+type: struct
+desc: "Pitch information for 2-dimensional linear pitched allocations"
+version: "1.14"
+class: $xDevice
+name: $x_pitched_alloc_2dimage_linear_pitch_exp_info_t
+base: $x_base_properties_t
+members:
+    - type: size_t
+      name: pitchAlign 
+      desc: "[out] Required pitch Aligment in Bytes."
+    - type: size_t
+      name: maxSupportedPitch 
+      desc: "[out] Maximum allowed pitch in Bytes."
+details:
+    - "This structure may be passed to $xDeviceGetImageProperties in conjunction with the $x_device_pitched_alloc_exp_properties_t via its pNext member"
+--- #--------------------------------------------------------------------------
 type: function
-desc: "Allocate pitched USM memory for images"
+desc: "Retrieves pitch information that can be used to allocate USM memory for a given image."
 version: "1.9"
 class: $xMem
 name: GetPitchFor2dImage
@@ -102,7 +118,7 @@ details:
     - |
       The implementation of this function should be lock-free.
     - |
-      The implementation must support ::ZE_experimental_bindless_image extension.
+      The implementation must support $X_BINDLESS_IMAGE_EXP_NAME extension.
 params:
     - type: $x_context_handle_t
       name: hContext
@@ -133,7 +149,7 @@ details:
     - "The application may call this function from simultaneous threads"
     - "The implementation of this function must be thread-safe."
     - "The implementation of this function should be lock-free."
-    - "The implementation must support ::ZE_experimental_bindless_image extension."
+    - "The implementation must support $X_BINDLESS_IMAGE_EXP_NAME extension."
 params:
     - type: $x_image_handle_t
       name: hImage
@@ -141,3 +157,19 @@ params:
     - type: "uint64_t*"
       name: pDeviceOffset
       desc: "[out] bindless device offset for image"
+--- #--------------------------------------------------------------------------
+type: struct
+desc: "Specify user defined pitch for pitched linear image allocations. This structure may be passed to $xImageCreate in conjunction with $x_image_pitched_exp_desc_t via its pNext member"
+class: $xDevice
+version: "1.15"
+name: $x_custom_pitch_exp_desc_t
+base: $x_base_desc_t
+members:
+    - type: size_t
+      name: rowPitch
+      desc: |
+            [in] user programmed aligned pitch for pitched linear image allocations. This pitch should satisfy the pitchAlign requirement in $x_pitched_alloc_2dimage_linear_pitch_exp_info_t 
+    - type: size_t
+      name: slicePitch
+      desc: |
+            [in] user programmed slice pitch , must be multiple of rowPitch.  For 2D image arrary or a slice of a 3D image array - this pitch should be >= rowPitch * image_height . For 1D iamge array >= rowPitch.
